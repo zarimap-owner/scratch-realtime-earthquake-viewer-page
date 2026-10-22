@@ -177,6 +177,137 @@
 
 		gtag('config', 'G-X7WPBQ5B08');
 	</script>
+	<script>
+(function() {
+  // 【調整用】低画質化の最大解像度（px）
+  // 300〜400程度にするとメモリを大幅に節約しつつ、見た目も綺麗に保てます
+  const MAX_DIMENSION = 300;
+
+  /**
+   * 1つの<img>タグをCanvas（低解像度）に自動置換する関数
+   */
+  async function convertImgToCanvas(imgElement) {
+    // 処理済み、またはSVGではない場合はスキップ
+    if (imgElement.dataset.lowresProcessed === 'true') return;
+    
+    const src = imgElement.src;
+    if (!src || (!src.endsWith('.svg') && !src.includes('image/svg+xml'))) return;
+
+    imgElement.dataset.lowresProcessed = 'true';
+
+    try {
+      // 外部（GitHub等）のSVGファイルを安全に取得
+      const response = await fetch(src);
+      if (!response.ok) return;
+      const svgText = await response.text();
+
+      // 代替用のCanvas要素を作成
+      const canvas = document.createElement('canvas');
+      
+      // 元のimgタグのクラスやスタイル、サイズを引き継ぐ
+      canvas.className = imgElement.className;
+      canvas.style.cssText = imgElement.style.cssText;
+      if (imgElement.width) canvas.style.width = imgElement.width + 'px';
+      if (imgElement.height) canvas.style.height = imgElement.height + 'px';
+      
+      // クッキリ拡大するためのCSS
+      canvas.style.imageRendering = 'crisp-edges';
+
+      // 低解像度でCanvasに描き出す
+      await renderSvgToLowResCanvas(svgText, canvas, MAX_DIMENSION);
+
+      // DOM上の img を canvas に置き換え（これでDOM上の重いSVGノードが消えてメモリが解放されます）
+      if (imgElement.parentNode) {
+        imgElement.parentNode.replaceChild(canvas, imgElement);
+      }
+    } catch (e) {
+      // CORS制限などでfetchできない場合は元のimgのまま維持
+      console.warn('SVG Auto-LowRes: Skipped due to network/CORS error for:', src);
+    }
+  }
+
+  /**
+   * SVG文字列を低解像度のCanvasにレンダリングするコア関数
+   */
+  function renderSvgToLowResCanvas(svgString, targetCanvas, maxDimension) {
+    return new Promise((resolve, reject) => {
+      const ctx = targetCanvas.getContext('2d');
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        let width = img.width || 300;
+        let height = img.height || 300;
+
+        // アスペクト比を維持して低解像度化
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        targetCanvas.width = width;
+        targetCanvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // iOSのメモリリーク対策
+        URL.revokeObjectURL(blobUrl);
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
+        resolve();
+      };
+
+      img.onerror = (err) => {
+        URL.revokeObjectURL(blobUrl);
+        reject(err);
+      };
+
+      img.src = blobUrl;
+    });
+  }
+
+  /**
+   * ページ全体のSVG画像をスキャンして自動変換
+   */
+  function scanAndConvert() {
+    const images = document.querySelectorAll('img');
+    images.forEach(img => convertImgToCanvas(img));
+  }
+
+  // ページ読み込み時に実行
+  window.addEventListener('DOMContentLoaded', () => {
+    scanAndConvert();
+
+    // 動的に追加されるSVG画像（無限スクロールやタブ切り替えなど）も自動で監視・変換
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) { // ELEMENT_NODE
+            if (node.tagName === 'IMG') {
+              convertImgToCanvas(node);
+            }
+            node.querySelectorAll('img').forEach(img => convertImgToCanvas(img));
+          }
+        });
+      });
+    });
+
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  });
+})();
+</script>
+
 </head>
 	<body>
 		<div id="app"></div>
